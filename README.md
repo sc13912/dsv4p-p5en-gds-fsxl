@@ -1,4 +1,4 @@
-# Accelerate vLLM model loading on Amazon EKS using InstantTensor strategy with GPUDirect Storage (GDS) on Amazon FSx for Lustre
+# Accelerate vLLM model loading on Amazon EKS using InstantTensor loader with GPUDirect Storage (GDS) on Amazon FSx for Lustre
 
 This repository contains the container image, EKS manifests, and setup scripts to
 benchmark vLLM cold-start model-loading time on a single `p5en.48xlarge`, comparing
