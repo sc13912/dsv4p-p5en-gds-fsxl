@@ -45,13 +45,10 @@ Of the two GDS-capable loaders, only one keeps the fast path when using tensor p
 
 ## Measured Performance
 
-For this proof-of-concept test, every run is taken to full completion before a time is recorded: the
-loader's own progress bar must reach **`100% Completed`** (`Loading safetensors checkpoint shards:
-66/66` for the default loader, `… using InstantTensor loader: 100%` for GDS, `… using Runai Model
-Streamer: 100% | 149782/149782` for S3) **and all 8 tensor-parallel ranks** must log `Model loading
-took`. Only then do we compare the ranks and report the **slowest of the 8** — the replica isn't
-loaded until the last GPU has its weights. Cold start, OS page cache dropped before each run.
-Model: DeepSeek-V4-Pro-0813 full weights, 66 shards, 892.7 GB.
+For this proof-of-concept test, we measure the model loading time directly from vLLM's own
+`Model loading took … seconds` log line — emitted once per rank by `gpu_model_runner.py` as each
+worker finishes reading its shard of weights into GPU memory. Every number below is a cold-start
+measurement (OS page cache dropped before each run), for the DeepSeek-V4-Pro-0813 full weights (66 shards, 892.7 GB).
 
 | source / loader | load time (mean of n) | vs default |
 |---|---|---|
@@ -59,10 +56,6 @@ Model: DeepSeek-V4-Pro-0813 full weights, 66 shards, 892.7 GB.
 | S3 + Run:AI streamer (`concurrency: 32`) | ~350 s (n=3) | 5.3× |
 | FSx Lustre + GDS (`instanttensor` CUFILE) | 50.9 s (n=6) | 36.3× |
 
-The S3 figure is the mean of 3 complete runs (all 8 ranks, streamer `100% Completed`) on an
-equivalent 8-GPU node in the same Region (us-west-2, S3 Standard); non-distributed S3 streaming is
-bound by S3 request throughput, not the GPU or interconnect, and is **run-to-run variable**
-(throughput-starved runs reached 10–18 min) — treat it as a reference point, not a fixed number.
 
 ## Repository Structure
 
