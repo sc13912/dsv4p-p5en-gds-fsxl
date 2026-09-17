@@ -46,7 +46,7 @@ Of the two GDS-capable loaders, only one keeps the fast path when using tensor p
 ## Measured Performance
 
 For this proof-of-concept test, we measure the model loading time directly from vLLM's own
-`Model loading took … seconds` log line — emitted once per rank by `gpu_model_runner.py` as each
+`Model loading took … seconds` log line — emitted once per rank by `model_runner.py` as each
 worker finishes reading its shard of weights into GPU memory. Every number below is a cold-start
 measurement (OS page cache dropped before each run), for the DeepSeek-V4-Pro-0813 full weights (66 shards, 892.7 GB).
 
