@@ -1,0 +1,28 @@
+# Static PV + PVC binding the pre-created FSx for Lustre (Step 2) via the FSx CSI driver.
+# Render + apply:  envsubst '${FSX_ID} ${FSX_DNS} ${FSX_MOUNT}' < manifests/fsx-lustre-pv-pvc.yaml | kubectl apply -f -
+# GDS works through this CSI-mounted path — verified: the nvidia-fs readMiB counter still moves by
+# the full checkpoint (DMA), not the CPU compat path. See KNOWN_ISSUES.
+apiVersion: v1
+kind: PersistentVolume
+metadata: { name: fsx-dsv4p-pv }
+spec:
+  capacity: { storage: 76800Gi }        # matches the 16-OST FSx from Step 2 (nominal; Lustre is not size-enforced here)
+  volumeMode: Filesystem
+  accessModes: [ReadWriteMany]           # shared across pods (serve + any staging job)
+  mountOptions: [flock]
+  persistentVolumeReclaimPolicy: Retain  # never delete the pre-created FSx via the PV lifecycle
+  csi:
+    driver: fsx.csi.aws.com
+    volumeHandle: ${FSX_ID}
+    volumeAttributes:
+      dnsname: ${FSX_DNS}
+      mountname: ${FSX_MOUNT}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: fsx-dsv4p-pvc, namespace: default }
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ""                   # static binding — no dynamic provisioning
+  volumeName: fsx-dsv4p-pv
+  resources: { requests: { storage: 76800Gi } }

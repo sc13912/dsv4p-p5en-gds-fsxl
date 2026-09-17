@@ -1,0 +1,44 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: ${CLUSTER}
+  region: us-west-2
+managedNodeGroups:
+  - name: gpu-p5en-cb
+    amiFamily: AmazonLinux2023
+    instanceType: p5en.48xlarge
+    desiredCapacity: 1
+    minSize: 0
+    maxSize: 1
+    privateNetworking: true
+    subnets: [${PRIVATE_SUBNET_A}]
+    volumeSize: 500
+    volumeType: gp3
+    efaEnabled: true
+    labels: { role: gpu, accelerator: h200 }
+    taints:
+      - { key: nvidia.com/gpu, value: "true", effect: NoSchedule }
+    tags: { project: dsv4p-p5en }
+    propagateASGTags: true
+    instanceMarketOptions:
+      marketType: capacity-block
+    capacityReservation:
+      capacityReservationTarget:
+        capacityReservationID: ${CAPACITY_RESERVATION}
+    iam:
+      attachPolicyARNs:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      attachPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [s3:GetObject, s3:ListBucket]
+            Resource:
+              - arn:aws:s3:::${S3_BUCKET}
+              - arn:aws:s3:::${S3_BUCKET}/*
+    # No GDS in bootstrap: the nvidia-fs build + EFA-over-LNet run post-Ready via
+    # scripts/03-host-gds.sh (LNet must load with its CPU-partition config *after* the
+    # node is up; doing it in bootstrap loads LNet too early and the EFA CPT pinning fails).

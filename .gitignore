@@ -1,0 +1,29 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+/build
+.eggs/
+*.egg
+.venv/
+venv/
+
+# Logs and raw benchmark output
+*.log
+results/
+
+# Temporary files
+*.tmp
+*.bak

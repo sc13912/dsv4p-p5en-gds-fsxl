@@ -1,0 +1,49 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: ${CLUSTER}
+  region: us-west-2
+  version: "1.36"
+vpc:
+  id: ${VPC}
+  subnets:
+    private:
+      us-west-2b: { id: ${PRIVATE_SUBNET_A} }   # capacity-block AZ — FSx + GPU node
+      us-west-2c: { id: ${PRIVATE_SUBNET_B} }   # 2nd AZ for the EKS control plane (min 2)
+    public:
+      us-west-2b: { id: ${PUBLIC_SUBNET_A} }
+      us-west-2c: { id: ${PUBLIC_SUBNET_B} }
+iam:
+  withOIDC: true
+managedNodeGroups:
+  # staging node, same AZ as the p5en block
+  - name: cpu-stage
+    amiFamily: AmazonLinux2023
+    instanceType: m6i.8xlarge
+    desiredCapacity: 1
+    minSize: 0
+    maxSize: 4
+    privateNetworking: true
+    subnets: [${PRIVATE_SUBNET_A}]
+    volumeSize: 200
+    volumeType: gp3
+    labels: { role: stage }
+    tags: { project: dsv4p-p5en }
+    propagateASGTags: true
+    iam:
+      attachPolicyARNs:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      attachPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject, s3:ListBucket, s3:AbortMultipartUpload, s3:DeleteObject]
+            Resource:
+              - arn:aws:s3:::${S3_BUCKET}
+              - arn:aws:s3:::${S3_BUCKET}/*
+    preBootstrapCommands:
+      - dnf install -y lustre-client
+      - modprobe lustre
