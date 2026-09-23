@@ -1,0 +1,5 @@
+# Include YAML in GitHub's language statistics.
+# YAML is a Linguist "data" language and is hidden from the language bar by default;
+# these overrides make the cluster/ and manifests/ files count.
+*.yaml linguist-detectable=true
+*.yml  linguist-detectable=true

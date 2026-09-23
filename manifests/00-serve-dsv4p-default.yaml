@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dsv4p-default
+  labels: { app: dsv4p-default }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }        # single node, 8 GPUs claimed -> RollingUpdate deadlocks
+  selector:
+    matchLabels: { app: dsv4p-default }
+  template:
+    metadata:
+      labels: { app: dsv4p-default }
+    spec:
+      nodeSelector: { accelerator: h200 }
+      tolerations:
+        - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+      containers:
+        - name: vllm
+          image: ${IMAGE}
+          securityContext:
+            privileged: true
+            capabilities: { add: ["IPC_LOCK"] }
+          env:
+            - { name: MODEL_PATH,                value: "/fsx/models/dsv4-pro-mxfp4" }
+            - { name: LOAD_FORMAT,               value: "auto" }
+            - { name: EXTRA_CONFIG,              value: "" }
+            - { name: OMP_NUM_THREADS,           value: "24" }   # host vCPUs / TP
+            - { name: VLLM_ENGINE_READY_TIMEOUT_S, value: "3600" }
+            - { name: NCCL_DEBUG,                value: "WARN" }
+          command: ["bash","-lc"]
+          args:
+            - |
+              set -x
+              nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+              python3 -c "import torch;print('cc',torch.cuda.get_device_capability(0))"
+              echo "BEFORE: $(grep -E 'readMiB|Active Shadow-Buffer' /proc/driver/nvidia-fs/stats 2>/dev/null | tr '\n' ' ')"
+              vllm serve "${MODEL_PATH}" \
+                --served-model-name dsv4-pro \
+                --load-format "${LOAD_FORMAT}" \
+                ${EXTRA_CONFIG:+--model-loader-extra-config "$EXTRA_CONFIG"} \
+                --tensor-parallel-size 8 \
+                --distributed-executor-backend mp \
+                --kv-cache-dtype fp8 \
+                --gpu-memory-utilization 0.90 \
+                --max-model-len 65536 \
+                --max-num-seqs 32 \
+                --trust-remote-code \
+                --host 0.0.0.0 --port 8000 &
+              VP=$!; wait $VP; echo "vllm exited rc=$?"
+              echo "AFTER: $(grep -E 'readMiB|Active Shadow-Buffer' /proc/driver/nvidia-fs/stats 2>/dev/null | tr '\n' ' ')"
+          resources:
+            limits:   { nvidia.com/gpu: 8 }
+            requests: { nvidia.com/gpu: 8 }
+          volumeMounts:
+            - { name: fsx, mountPath: /fsx }
+            - { name: shm, mountPath: /dev/shm }
+      volumes:
+        - { name: fsx, persistentVolumeClaim: { claimName: fsx-dsv4p-pvc } }
+        - { name: shm, emptyDir: { medium: Memory, sizeLimit: 64Gi } }
