@@ -63,12 +63,11 @@ requires.
 `configure-efa-fsx-lustre-client/setup.sh` ends with `systemctl enable --now`, which on a
 first boot prints `Job for configure-efa-fsx-lustre-client.service canceled` and returns
 non-zero even though the unit succeeded — systemd supersedes the `--now` start job with the
-one from `enable`'s own dependency chain. Its first-run install also reloads the NVIDIA
-driver stack, unloading `nvidia_fs`. `scripts/03-host-gds.sh` therefore ignores its exit
-status and checks real state instead (`systemctl is-active`, `lsmod`, `/dev/nvidia-fs*`,
-EFA NID count), re-inserting `nvidia-fs.ko` if it was dropped. Do not "tidy away" the
-`|| true` — without it the script aborts before GDS is usable, and without the state checks
-a node with 16 EFA NIDs but no `nvidia_fs` looks healthy while cuFile silently falls back.
+one from `enable`'s own dependency chain. `scripts/03-host-gds.sh` therefore ignores its exit
+status and checks real state instead (`systemctl is-active`, `/dev/nvidia-fs*`, EFA NID count).
+Do not "tidy away" the `|| true` — without it the script aborts before GDS is usable, and without
+the state checks a node with 16 EFA NIDs but no `nvidia_fs` looks healthy while cuFile silently
+falls back. It leaves `nvidia_fs` alone: AWS's sample never references nvidia at all.
 
 ## EFA silently falls back to TCP without an egress rule naming the FSx SG
 

@@ -3,13 +3,15 @@
 # Single node: each arm is deleted before the next is applied.
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1   # run from repo root, so manifests/ resolves regardless of CWD
-: "${IMAGE:?}" "${S3_BUCKET:?}" "${MODEL_NAME:?}" "${AWS_REGION:?}"
-render(){ envsubst '${IMAGE} ${S3_BUCKET} ${MODEL_NAME} ${AWS_REGION}' < "manifests/$1"; }  # runtime ${MODEL_PATH} etc. stay intact
+: "${IMAGE:?}" "${S3_BUCKET:?}" "${MODEL_NAME:?}" "${AWS_REGION:?}" "${MODEL_DIR:?}"
+render(){ envsubst '${IMAGE} ${S3_BUCKET} ${MODEL_NAME} ${AWS_REGION} ${MODEL_DIR}' < "manifests/$1"; }  # runtime ${MODEL_PATH} etc. stay intact
 
 run(){ # manifest  app-label  description
   echo "=== $3 ==="
   render "$1" | kubectl apply -f -
-  kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l "app=$2" --timeout=600s  # pod start incl. cold image pull; NOT the load
+  # 30 min covers a cold pull of the ~9 GB image. || true so a timeout still reaches the
+  # delete below - otherwise set -e leaves 8 GPUs claimed and the later arms cannot schedule.
+  kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l "app=$2" --timeout=1800s || true
   for i in $(seq 1 480); do   # wait for the API server, up to 40 min (the default loader needs ~29)
     kubectl logs -l "app=$2" --tail=-1 2>/dev/null | grep -q "Application startup complete" && break
     sleep 5

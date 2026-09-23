@@ -52,10 +52,9 @@ For this proof-of-concept test, we measure the model loading time directly from 
 worker finishes reading its shard of weights into GPU memory. Every number below is a cold-start
 measurement, for the DeepSeek-V4-Pro-0813 full weights (66 shards, 892.7 GB).
 
-Each arm runs in its own pod and `04-loader-ab.sh` deletes that deployment before starting the
-next, which takes the arm's page cache with it - measured 22 GB still cached on a 2 TiB node
-after the default arm had read 831 GiB. So no explicit cache drop is needed, but do not re-run a
-single arm back-to-back and compare: that one is warm.
+Every arm drops the host page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`) before loading, so
+each figure is a cold read. Without it the default loader can come in around 4x faster off a warm
+cache, which understates the speedup rather than inflating it.
 
 | source / loader | load time (mean of 3 runs) | vs default |
 |---|---|---|
@@ -109,6 +108,7 @@ KNOWN_ISSUES.md  intrinsic traps (GDS host build, cufile.json, privileged pod, s
 
 - An EKS-capable account with a `p5en.48xlarge` capacity block.
 - `eksctl`, `kubectl`, `aws` CLI, `envsubst` (from `gettext`), `jq`, and `base64`.
+  The helper in Step 6 encodes with `base64 | tr -d '\n'`, which works on both GNU and BSD/macOS.
 - An existing VPC with private and public subnets in two AZs (EKS control-plane minimum). One AZ must be the capacity-block AZ where the GPU node and FSx live.
 - Docker, to build the image from `image/Dockerfile` (Step 2 pushes it to ECR).
 
@@ -228,7 +228,7 @@ run_on_node() {                      # run_on_node <instance-id> <script> [VAR=v
   local id=$1 script=$2; shift 2
   local cid=$(aws ssm send-command --instance-ids "$id" \
     --document-name AWS-RunShellScript --timeout-seconds 3600 \
-    --parameters commands="[\"echo $(base64 -w0 $script) | base64 -d > /tmp/s.sh; $* bash /tmp/s.sh\"]" \
+    --parameters commands="[\"echo $(base64 < $script | tr -d '\n') | base64 -d > /tmp/s.sh; $* bash /tmp/s.sh\"]" \
     --query Command.CommandId --output text)
   local st=InProgress
   until [ "$st" != InProgress ] && [ "$st" != Pending ]; do
@@ -254,8 +254,12 @@ Check: `01` prints `8` active OSTs and `stripe_count: -1`; `02` ends with
 `all 71 files verified byte-exact`. `02` downloads 892.7 GB and takes roughly 20 minutes.
 
 ### Step 7: Upload a copy to S3 (for the S3 arm)
+Also on the staging node: `$MODEL_DIR` lives on FSx, which is not mounted on your workstation.
 ```bash
+run_on_node $STAGING_NODE /dev/stdin \
+  MODEL_DIR=$MODEL_DIR S3_BUCKET=$S3_BUCKET MODEL_NAME=$MODEL_NAME <<'EOS'
 aws s3 cp $MODEL_DIR/ s3://$S3_BUCKET/$MODEL_NAME/ --recursive --only-show-errors
+EOS
 ```
 
 ### Step 8: GPU node on the capacity block

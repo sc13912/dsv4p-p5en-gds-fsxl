@@ -22,7 +22,7 @@ spec:
             privileged: true
             capabilities: { add: ["IPC_LOCK"] }
           env:
-            - { name: MODEL_PATH,                value: "/fsx/models/dsv4-pro-mxfp4" }
+            - { name: MODEL_PATH,                value: "${MODEL_DIR}" }
             - { name: LOAD_FORMAT,               value: "instanttensor" }
             - { name: INSTANTTENSOR_BACKEND,     value: "CUFILE" }
             - { name: INSTANTTENSOR_IO_DEPTH,    value: "64" }
@@ -36,6 +36,7 @@ spec:
           args:
             - |
               set -x
+              sync; echo 3 > /proc/sys/vm/drop_caches   # cold read; host-wide, needs the privileged pod
               nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
               python3 -c "import torch;print('cc',torch.cuda.get_device_capability(0))"
               echo "BEFORE: $(grep -E 'readMiB|Active Shadow-Buffer' /proc/driver/nvidia-fs/stats 2>/dev/null | tr '\n' ' ')"
