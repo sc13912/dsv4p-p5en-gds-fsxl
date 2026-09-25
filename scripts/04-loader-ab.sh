@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 # Run the three loader arms one at a time and print each load time.
 # Single node: each arm is deleted before the next is applied.
 set -euo pipefail
@@ -9,14 +11,20 @@ render(){ envsubst '${IMAGE} ${S3_BUCKET} ${MODEL_NAME} ${AWS_REGION} ${MODEL_DI
 run(){ # manifest  app-label  description
   echo "=== $3 ==="
   render "$1" | kubectl apply -f -
-  # 30 min covers a cold pull of the ~9 GB image. || true so a timeout still reaches the
-  # delete below - otherwise set -e leaves 8 GPUs claimed and the later arms cannot schedule.
+  # A cold pull of the ~9 GB image can take a while, so allow 30 min before giving up.
+  # `|| true` matters: under set -e a timed-out wait would abort the script before the
+  # delete at the end of this function, leaving the deployment holding all 8 GPUs so no
+  # later arm could schedule. With it, a slow arm costs only its own number.
   kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l "app=$2" --timeout=1800s || true
   for i in $(seq 1 480); do   # wait for the API server, up to 40 min (the default loader needs ~29)
     kubectl logs -l "app=$2" --tail=-1 2>/dev/null | grep -q "Application startup complete" && break
     sleep 5
   done
-  kubectl logs -l "app=$2" --tail=-1 > "$2.log"   # keep the entire log; never pipe a -f stream, it truncates
+  kubectl logs -l "app=$2" --tail=-1 > "$2.log"   # keep the entire vllm start log
+  # weight load time: the FSx arms log it; the Run:AI streamer only has its progress bar
+  grep -a "Loading weights took" "$2.log" \
+    || grep -a "Loading safetensors" "$2.log" | grep -a "100%" | tail -1 \
+    || echo "no weight-load figure in $2.log"
   grep "Model loading took" "$2.log" || echo "NOT READY after 40 min - check $2.log"
   render "$1" | kubectl delete -f - --wait=true
 }

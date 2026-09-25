@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 # GDS host setup — run ONCE per GPU node AFTER it is k8s-Ready, NOT in node bootstrap.
 # Why not bootstrap: the EFA-over-LNet step pins each EFA interface to an LNet CPU partition, which
 # requires LNet to load with its 16-partition CPU table. If anything loads LNet earlier (e.g. a
@@ -18,8 +20,7 @@ NVFS_SRC=/tmp/gds-nvidia-fs-2.29.4/src
 cd /tmp && curl -sSL https://github.com/NVIDIA/gds-nvidia-fs/archive/refs/tags/v2.29.4.tar.gz | tar -xz
 cd "$NVFS_SRC"
 # nvidia-fs includes nv-p2p.h from the driver sources, which the AL2023 GPU AMI deletes after
-# building the driver. The driver RPM is still cached on the AMI, so unpack it - no network, and
-# no need to test whether the sources happen to be there.
+# building the driver. The driver RPM is still cached on the AMI, so unpack it.
 rpm2cpio /opt/nvidia/current/flavors/open/.rpms/kmod-nvidia-open-dkms-*.rpm | (cd / && cpio -idmu --quiet)
 NVIDIA_SRC_DIR="$(ls -d /usr/src/nvidia-*/kernel-open/nvidia | head -1)"
 [ -f "$NVIDIA_SRC_DIR/nv-p2p.h" ] || { echo "FATAL: nv-p2p.h not found (NVIDIA_SRC_DIR=$NVIDIA_SRC_DIR)"; exit 1; }
@@ -29,11 +30,10 @@ NVIDIA_SRC_DIR="$NVIDIA_SRC_DIR" \
 rmmod nvidia_fs 2>/dev/null || true
 insmod ./nvidia-fs.ko
 
-# EFA over LNet for GDS (AWS's official script; loads LNet with the 16-partition CPU table).
-# Do not trust its exit status: on a first boot its closing `systemctl enable --now` returns
-# non-zero with "Job for ... canceled" even though the unit succeeded (systemd supersedes the
-# --now start job with the one from enable's own dependency chain). Check the unit state below
-# instead of the exit code. It does not touch nvidia_fs - the module loaded above stays loaded.
+# Put Lustre's traffic onto the EFA interfaces for GDS, using AWS's own script - it loads LNet with the
+# 16-partition CPU table the EFA pinning needs. Ignore its exit code: on a first boot the closing
+# `systemctl enable --now` returns non-zero with "Job for ... canceled" even though the service
+# started fine, so we check the unit state below instead. It leaves nvidia_fs untouched.
 cd /tmp && curl -sO https://docs.aws.amazon.com/fsx/latest/LustreGuide/samples/configure-efa-fsx-lustre-client.zip
 unzip -oq configure-efa-fsx-lustre-client.zip
 ( cd configure-efa-fsx-lustre-client && bash ./setup.sh --optimized-for-gds ) || true

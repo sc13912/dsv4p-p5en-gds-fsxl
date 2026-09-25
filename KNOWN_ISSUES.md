@@ -6,11 +6,11 @@ Issues and lessons from building this PoC.
 
 The EKS AL2023 GPU AMI ships no nvidia-fs at all, so `cuFileDriverOpen` returns error 5001 until
 `scripts/03-host-gds.sh` builds and loads it. Two wrinkles make that build fiddly. First, nvidia-fs
-needs `nv-p2p.h` from the NVIDIA **driver** sources, and the AMI deletes those after building the
-driver — the script restores them from the driver RPM still cached under `/opt/nvidia`. Second, the
-build must set `NVFS_MAX_PEER_DEVS=128`; the default of 64 is too small for p5en's 16 EFA + ENA +
-NVMe devices, and it is a compile-time array bound with no runtime equivalent, so a packaged module
-built at 64 cannot be made to work.
+needs `nv-p2p.h` from the NVIDIA **driver** sources, and the AMI deletes those once it has built
+the driver. The script gets them back from the driver RPM, which is still cached under
+`/opt/nvidia`. Second, the build must set `NVFS_MAX_PEER_DEVS=128`; the default of 64 is too small
+for p5en's EFA + ENA + NVMe devices, and it is a compile-time array bound with no runtime
+equivalent, so a packaged module built at 64 cannot be made to work.
 
 FSx Lustre GDS is gated by an allowlist in AWS's `configure-efa-fsx-lustre-client.py`, currently
 p5.48xlarge, p5e.48xlarge, p5en.48xlarge, p6-b200.48xlarge and p6-b300.48xlarge — check it before
@@ -22,12 +22,13 @@ If bootstrap loads LNet early (e.g. a `modprobe lustre`), it comes up with the d
 and the CPT pinning is rejected — only ~3 of 16 attach (→ ~3× slower loads).
 
 The NVIDIA GPU Operator's `gds.enabled=true` is the usual way to install nvidia-fs on Kubernetes,
-but it cannot be used here. GDS exists only as a sidecar of the operator's driver DaemonSet, and
-that DaemonSet is not created when `driver.enabled=false` — which is the setting AWS requires on
-this AMI, since the driver is already installed. No `nvidia-fs` container image is published for
-Amazon Linux either. The operator also documents GDS support for local NVMe and remote NFS only,
-and would not set up the FSx-Lustre-over-EFA path regardless. A production deployment would fold
-`scripts/03-host-gds.sh` into a custom AMI or a DaemonSet rather than leaving it a manual step.
+but it cannot be used here, for three reasons. GDS ships only as a sidecar of the operator's
+driver DaemonSet, and that DaemonSet is never created when `driver.enabled=false`, which is the
+setting AWS requires on this AMI because the driver is already installed. No `nvidia-fs` container
+image is published for Amazon Linux. And the operator documents GDS support for local NVMe and
+remote NFS only, so it would not set up the FSx-Lustre-over-EFA path anyway. In production you
+would fold `scripts/03-host-gds.sh` into a custom AMI or a DaemonSet rather than leave it a manual
+step.
 
 ## cufile.json Pinned Memory / execution block
 
@@ -73,8 +74,9 @@ falls back. It leaves `nvidia_fs` alone: AWS's sample never references nvidia at
 
 Symptom: everything reports success and throughput is ~5% of what the filesystem provisions. The
 mount works, `lfs df` lists every OST, AWS's configurator prints "Successfully added all EFA
-interfaces", `lnetctl net show` lists all 16 EFA NIDs `up`, and the GDS load still takes 232 s
-instead of 42 s. The only evidence is in `dmesg`:
+interfaces", `lnetctl net show` lists all 16 EFA NIDs `up`, and weight loading still takes 223 s
+instead of 35 s. The DMA phase runs at 4.25 GB/s rather than 42.5 GB/s. The only evidence is in
+`dmesg`:
 
 ```
 LNetError: kefalnd_tx_complete() Device[rdmapXXs0] QP[0] received TX[CONN_PROBE]

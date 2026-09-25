@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 # Stage the checkpoint onto the striped FSx dir. Use curl, not huggingface_hub,
 # which resets stripe_count to 1; curl inherits the dir's stripe default.
 set -euo pipefail
@@ -13,9 +15,11 @@ for f in json.load(sys.stdin):
     if "/" not in p and p.endswith((".safetensors",".json",".txt",".model",".py")):
         print(f["size"], p)' > /tmp/wanted.txt
 
-# Download 16 in parallel, resuming. Do not abort on a failed file - the check below decides.
+# Fetch 64 files at a time. `-C -` resumes a part-downloaded file, so re-running this script
+# only pulls what is missing. `|| true` keeps one failed file from killing the batch under
+# set -e; the size check below decides whether the download actually succeeded.
 cut -d' ' -f2- /tmp/wanted.txt \
- | xargs -P 16 -I@ curl -fL --retry 8 -C - -o "@" \
+ | xargs -P 64 -I@ curl -fL --retry 8 -C - -o "@" \
      "https://huggingface.co/${MODEL_REPO}/resolve/main/@?download=true" || true
 
 # What is actually on disk, in the same format.

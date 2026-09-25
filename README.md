@@ -1,12 +1,18 @@
 # Accelerate vLLM model loading on Amazon EKS using InstantTensor loader with GPUDirect Storage (GDS) on Amazon FSx for Lustre
 
-This repository contains the container image, EKS manifests, and setup scripts to
+This repository contains the AWS infrastructure, EKS manifests and setup scripts to
 benchmark vLLM cold-start model-loading time on a single `p5en.48xlarge`, comparing
-three read paths for the [DeepSeek-V4-Pro-0813](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813) full weights (892.7 GB).
+three read paths for the 1.6-trillion parameter [DeepSeek-V4-Pro-0813](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813) full weights (892.7 GB).
 
 Using the new [InstantTensor](https://docs.vllm.ai/en/latest/models/extensions/instanttensor/)
 loader with NVIDIA GPUDirect Storage (GDS) on Amazon FSx for Lustre, we were able to cut the vLLM
-model load time from about 29 minutes to 45 seconds — a **~38x speedup** in our testing.
+weight loading time from about 28 minutes to 35 seconds — a **~48x speedup** in our testing.
+
+## Disclaimer
+
+This sample repository is for a proof-of-concept test. It is provided for demonstration purposes only
+and should be thoroughly reviewed for security, compliance, and cost implications before any production
+use.
 
 ## Introduction
 
@@ -15,81 +21,84 @@ GPU memory before it can serve requests. For a 892.7 GB model this weight-loadin
 dominates cold start, and vLLM's default loader runs it on a single, CPU-bound path — reading
 each file, deserializing it, then copying the tensors to each GPU.
 
-This repository demonstrates how much that step can be cut by taking the read
-path off the default CPU loader and onto a direct storage→HBM DMA transfer via NVIDIA GPUDirect Storage
-(GDS), using the InstantTensor loader on Amazon FSx for Lustre. For comparison, we also
-include S3 parallel streaming with the Run:AI Model Streamer (another common approach),
-and the vLLM default loader (via FSx) as the baseline.
+This repository measures how much faster that step gets when the weights go straight from storage
+into GPU memory over NVIDIA GPUDirect Storage (GDS), using the InstantTensor loader on Amazon FSx
+for Lustre. For comparison we also run the same weights through the
+[NVIDIA Run:AI Model Streamer](https://github.com/dsx-ai-factory/model-streamer) from S3, and
+through vLLM's default loader as the baseline.
 
-We look at the weight-loading phase only, taken straight from vLLM's own `Model loading
-took` log line at cold start — not inference latency, throughput, or accuracy.
+We look at the weight-loading phase only, using the `Loading weights took` line that vLLM prints
+during a cold start. Inference latency and throughput are out of scope.
 
 ### Why InstantTensor
 
-It is worth noting that vLLM's default loader (`--load-format auto`) is CPU-based and never uses GDS.
+vLLM's default loader (`--load-format auto`) is CPU-based and never touches GDS.
 Of the two GDS-capable loaders, only one keeps the fast path when using tensor parallelism (TP>1).
 
 - **`fastsafetensors`** can use GDS, but vLLM forces `nogds=True` whenever TP>1
   (see upstream [PR #34070](https://github.com/vllm-project/vllm/pull/34070)) — so at TP=8 it silently falls back to the CPU path.
 - **`instanttensor`** passes the process group through instead of disabling GDS, so it
-  keeps the storage→HBM DMA at TP>1. That is why this PoC uses it.
+  keeps the storage→HBM DMA at TP>1.
 
 ## Architecture
 
 - One `p5en.48xlarge` — 8× H200 (141 GiB each, 1,128 GiB HBM), 16 EFA interfaces.
-- Amazon EKS; the GPU node joins on an on-demand capacity block. Weights served
-  by vLLM 0.28.0, TP=8, `mp` executor, from a container image that adds the GDS
-  toolchain and `instanttensor` on top of the AWS Deep Learning Container
+- Amazon EKS cluster where the GPU node joins on an on-demand capacity block.
+- Weights are served by **vLLM 0.28.0**, **TP=8**, `mp` executor, from a container image that adds the GDS
+  toolchain and `instanttensor` on top of the AWS Deep Learning Container (DLC)
   `public.ecr.aws/deep-learning-containers/vllm:0.28.0-gpu-py312-cu130-ubuntu24.04-ec2`
   (the same upstream vLLM 0.28.0 release, republished by AWS with EFA and aws-ofi-nccl).
-- Amazon FSx for Lustre, PERSISTENT_2, 8 OSTs (37.5 GB/s provisioned), EFA-enabled.
-- An S3 bucket in the same Region holds a second copy for the Run:AI arm.
+- Amazon FSx for Lustre, **PERSISTENT_2**, **8 OSTs** (37.5 GB/s provisioned), EFA-enabled.
+- An S3 bucket in the same Region holds another copy of the model weights for the Run:AI arm.
 
 ## Measured Performance
 
-For this proof-of-concept test, we measure the model loading time directly from vLLM's own
-`Model loading took … seconds` log line — emitted once per rank by `model_runner.py` as each
-worker finishes reading its shard of weights into GPU memory. Every number below is a cold-start
-measurement, for the DeepSeek-V4-Pro-0813 full weights (66 shards, 892.7 GB).
+For this proof-of-concept test, we report two figures per testing arm. The first is how long vLLM
+spends loading weights, which it reports in a `Loading weights took … seconds` line from
+`default_loader.py`. Only rank 0 prints it. The second is the total model load time from
+`model_runner.py`. Every rank prints that one, and we take the slowest. The difference between the
+two is a post-load processing step, which we can measure on the two FSx arms and which comes to
+about 9.6 seconds on both.
+
+The Run:AI streamer never reports its own load time, so for that arm we read the elapsed time off
+the loader's progress bar instead.
 
 Every arm drops the host page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`) before loading, so
 each figure is a cold read. Without it the default loader can come in around 4x faster off a warm
 cache, which understates the speedup rather than inflating it.
 
-| source / loader | load time (mean of 3 runs) | vs default |
-|---|---|---|
-| FSx Lustre, default vLLM (`auto`) | 1712.7 s | 1.0× |
-| S3 + Run:AI streamer (`concurrency: 32`) | 368.7 s | 4.6× |
-| FSx Lustre + GDS (`instanttensor` CUFILE) | **45.1 s** | **38.0×** |
+| source / loader | weight load | total model load | vs default |
+|---|---|---|---|
+| FSx Lustre, default vLLM (`auto`) | 1703.0 s | 1712.7 s | 1.0× |
+| S3 + Run:AI streamer (`concurrency: 32`) | 316.3 s | 368.7 s | 5.4× |
+| FSx Lustre + GDS (`instanttensor` CUFILE) | **35.5 s** | 45.1 s | **48.0×** |
 
-Per-run values: default 1690.7 / 1672.4 / 1775.0 s · S3 372.8 / 364.8 / 368.5 s ·
-GDS 44.7 / 45.1 / 45.4 s. GDS is also ~8.2x faster than the S3 path.
+Per-run weight-load values (tested in `us-east-2`):
+- FSx for Lustre with default loader: 1681.4 / 1662.6 / 1765.1 s
+- S3 + Run:ai model streamer: 246 / 351 / 352 s
+- FSx for Lustre with GDS: 35.1 / 35.5 / 35.8 s
 
-Run-to-run variance differs sharply by arm: GDS spans 1.4% and S3 2.2%, but the default
-loader spans about 40% across a wider sample (1543-2409 s over 12 cold runs in two
-Regions). Treat the default figure as an order of magnitude, not a precise number.
+The GDS arm spends 21 of its 35.5 seconds moving bytes from storage into GPU memory, at
+42.5 GB/s. That is faster than the 37.5 GB/s the filesystem provisions, which is only possible
+because the FSx file servers cache reads in memory. The remaining 14 seconds go on placing
+roughly 150,000 tensors into model parameters, about 87 microseconds each. So the per-tensor
+placement takes roughly 40% of the weight load, and that part is not bandwidth bound.
 
 ### 8 vs 16 OSTs: 8 is the cost-effective choice
 
 We also ran the same GDS arm on a 16-OST filesystem (75 GB/s provisioned, twice the cost):
 
-| OSTs | provisioned | GDS load time (mean of 5) | transfer peak |
-|---|---|---|---|
-| 8 | 37.5 GB/s | 45.1 s | 42.5 GB/s |
-| 16 | 75 GB/s | 41.4 s | 50.0 GB/s |
+| OSTs | provisioned | weight load | DMA phase | DMA throughput |
+|---|---|---|---|---|
+| 8 | 37.5 GB/s | 35.5 s (n=3) | 21.0 s | 42.5 GB/s |
+| 16 | 75 GB/s | 31.9 s (n=5) | 19.4 s | 46.0 GB/s |
 
-Doubling provisioned bandwidth bought **8.3%** on load time, and GDS never came close to
-saturating even the 8-OST limit — the load is bound by fixed per-operation overhead
-(cuFile setup, per-file open, and post-load weight processing), not by bandwidth. Only
-about 18-20 s of the ~45 s total is actual DMA.
+Doubling the provisioned bandwidth bought **10.1%** on weight load. At 8 OSTs the loader is pressing
+against the filesystem, reading at 113% of what it provisions. At 16 OSTs it reaches only 61%, so the
+extra bandwidth sits unused and the loader itself becomes the limit.
 
-The default loader gained nothing measurable from the extra OSTs: it averages ~0.5 GB/s,
-roughly 1.4% of what 8 OSTs already provide. A 16-OST sample (n=5) averaged 1878.5 s
-against 1812.2 s at 8 OSTs (n=7) - a 3.7% difference swamped by the ~40% run-to-run
-spread.
-
-**So 8 OSTs is the better value for this workload**: half the FSx cost for ~8% on the GDS
-arm and nothing on the others.
+**So 8 OSTs is more cost-effective for this workload**: half the FSx cost for ~10% weight load
+difference.
 
 
 ## Repository Structure
@@ -108,8 +117,7 @@ KNOWN_ISSUES.md  intrinsic traps (GDS host build, cufile.json, privileged pod, s
 
 - An EKS-capable account with a `p5en.48xlarge` capacity block.
 - `eksctl`, `kubectl`, `aws` CLI, `envsubst` (from `gettext`), `jq`, and `base64`.
-  The helper in Step 6 encodes with `base64 | tr -d '\n'`, which works on both GNU and BSD/macOS.
-- An existing VPC with private and public subnets in two AZs (EKS control-plane minimum). One AZ must be the capacity-block AZ where the GPU node and FSx live.
+- An existing VPC with private and public subnets across two AZs. One AZ must be the capacity-block AZ where the GPU node and FSx live.
 - Docker, to build the image from `image/Dockerfile` (Step 2 pushes it to ECR).
 
 ## Configuration
@@ -205,7 +213,7 @@ export FSX_MOUNT=$(aws fsx describe-file-systems --file-system-id $FSX_ID \
   --query 'FileSystems[0].LustreConfiguration.MountName' --output text)
 export FSX_DNS="${FSX_ID}.fsx.${AWS_REGION}.amazonaws.com"
 ```
-Want: 38400 / 4800 = **8 OSTs**, 37.5 GB/s provisioned.
+Expect: 38400 / 4800 = **8 OSTs**, 37.5 GB/s provisioned.
 
 ### Step 5: EKS cluster, staging node, cross-SG rules
 ```bash
@@ -251,7 +259,7 @@ run_on_node $STAGING_NODE scripts/02-stage-weights.sh \
   FSX_DNS=$FSX_DNS FSX_MOUNT=$FSX_MOUNT MODEL_DIR=$MODEL_DIR MODEL_REPO=$MODEL_REPO
 ```
 Check: `01` prints `8` active OSTs and `stripe_count: -1`; `02` ends with
-`all 71 files verified byte-exact`. `02` downloads 892.7 GB and takes roughly 20 minutes.
+`all 71 files verified byte-exact`. `02` downloads 892.7 GB and takes roughly 15 minutes.
 
 ### Step 7: Upload a copy to S3 (for the S3 arm)
 Also on the staging node: `$MODEL_DIR` lives on FSx, which is not mounted on your workstation.
@@ -289,7 +297,7 @@ run_on_node $GPU_NODE /dev/stdin <<'EOS'
 lnetctl net show -v | awk '/net type: /{t=$4} /recv_count:/{a[t]+=$2} END{for(k in a) print k, a[k]}'
 EOS
 ```
-Want: a non-zero and growing `efa` count once the benchmark runs. Counting EFA NIDs proves
+Expect: a non-zero and growing `efa` count once the benchmark runs. Counting EFA NIDs proves
 nothing - 16 can be present and `up` while every byte travels over TCP.
 
 ### Step 10: FSx CSI driver + static PV/PVC
@@ -307,9 +315,11 @@ envsubst '${FSX_ID} ${FSX_DNS} ${FSX_MOUNT}' < manifests/fsx-lustre-pv-pvc.yaml 
 ```bash
 bash scripts/04-loader-ab.sh              # renders manifests via envsubst; FSx default | S3 Run:AI | FSx GDS
 ```
-Check: about 50 minutes for all three arms. Each writes `dsv4p-{default,s3,gds}.log` and prints
-eight `Model loading took` lines, one per tensor-parallel rank; take the slowest. `NOT READY`
-means that arm never served and its log holds the reason.
+Check: about 50 minutes for all three arms. Each writes `dsv4p-{default,s3,gds}.log`. For every
+arm the script prints the weight-load figure first, then eight `Model loading took` lines, one per
+tensor-parallel rank - take the slowest of those. On the S3 arm the weight-load figure comes from
+the loader's progress bar, since the Run:AI streamer does not log its own. `NOT READY` means that
+arm never served and its log holds the reason.
 
 Then confirm on the node that GDS carried the checkpoint, rather than the POSIX path silently
 standing in for it:
@@ -319,7 +329,7 @@ grep -E 'readMiB' /proc/driver/nvidia-fs/stats
 lnetctl net show -v | awk '/net type: /{t=$4} /recv_count:/{a[t]+=$2} END{for(k in a) print k, a[k]}'
 EOS
 ```
-Want: `readMiB` at least the size of the checkpoint (851371 MiB here) with `err=0`, and `efa`
+Expect: `readMiB` at least the size of the checkpoint (851371 MiB here) with `err=0`, and `efa`
 far larger than `tcp`. Both counters are cumulative on the host and outlive the pod.
 
 ## Cleanup
@@ -341,13 +351,36 @@ aws ec2 delete-security-group --group-id $SG
 
 ## Conclusion
 
-On this p5en.48xlarge node GDS loads the checkpoint **38× faster** than the default vLLM loader
-and **8.2× faster** than a parallel S3 stream.
+On a single p5en.48xlarge, moving the read path onto GPUDirect Storage cut weight loading for a
+1.6-trillion parameter checkpoint from about 28 minutes to 35 seconds. That is 48× faster than
+vLLM's default loader, and 8.9× faster than streaming the same weights in parallel from S3.
+
+Two things matter more than raw filesystem bandwidth. The loader has to keep the GDS path alive
+under tensor parallelism, which is why this PoC uses `instanttensor` rather than
+`fastsafetensors`. And the checkpoint has to be striped across every OST before it is written,
+because Lustre only applies striping to new files. Get the loader wrong and GDS is silently
+disabled; get the striping wrong and you read from one OST instead of eight.
+
+A bigger filesystem buys less than you would expect. Doubling from 8 to 16 OSTs improved weight
+loading by only 10%. For a modern MoE model, 40% of the weight load goes on per-tensor work that
+no amount of bandwidth will speed up.
+
+To reproduce this, follow the Deployment steps above. The traps we hit on the way are in
+[`KNOWN_ISSUES.md`](KNOWN_ISSUES.md).
 
 ## Known Issues
 
 See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md).
 
+## Security
+
+See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+
+## Contributing
+
+Contributions welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) and
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
-MIT-0. See [LICENSE](LICENSE).
+This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) file.

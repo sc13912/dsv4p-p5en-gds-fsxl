@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 # DeepSeek-V4-Pro-0813 weight loading from FSx for Lustre over GPUDirect Storage.
 # Additive layer on the upstream vLLM image: nothing is removed or downgraded.
 # pip delta vs base = instanttensor only.
@@ -38,7 +40,7 @@ RUN pip install --no-cache-dir --no-deps --break-system-packages instanttensor==
 
 # The "execution" block is NOT optional. Omit it and cuFile defaults to
 # parallel_io=false / max_io_threads=0 / max_request_parallelism=0 — no I/O
-# threadpool at all, which costs ~1.4x on this workload (69.6 s vs 44.6 s).
+# threadpool at all, which costs ~1.4x on this workload (total load 69.6 s vs 44.6 s).
 # per_buffer_cache_size_kb also defaults to 1024; 16384 is what the measured
 # configuration used.
 RUN printf '%s\n' \
