@@ -1,6 +1,6 @@
 # Known Issues
 
-Genuine limitations hit while building this PoC.
+Known issues hit while building this PoC.
 
 ## nvidia-fs Build (NVFS_MAX_PEER_DEVS)
 
