@@ -1,7 +1,7 @@
 # Static PV + PVC binding the pre-created FSx for Lustre (Step 4) via the FSx CSI driver.
 # Render + apply:  envsubst '${FSX_ID} ${FSX_DNS} ${FSX_MOUNT}' < manifests/fsx-lustre-pv-pvc.yaml | kubectl apply -f -
 # GDS works through this CSI-mounted path — verified: the nvidia-fs readMiB counter still moves by
-# the full checkpoint (DMA), not the CPU compat path. See KNOWN_ISSUES.
+# the full checkpoint (DMA), not the CPU compat path.
 apiVersion: v1
 kind: PersistentVolume
 metadata: { name: fsx-dsv4p-pv }

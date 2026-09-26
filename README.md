@@ -119,7 +119,7 @@ scripts/         numbered flow: 01 mount/stripe + 02 stage weights (staging node
                  03 GDS host setup (GPU node, post-Ready), 04 three-arm benchmark
 manifests/       three vLLM serve manifests (default | GDS | S3) + fsx-lustre-pv-pvc.yaml
                  (static FSx CSI PV/PVC — the pods mount FSx via the CSI driver)
-KNOWN_ISSUES.md  intrinsic traps (GDS host build, cufile.json, privileged pod, striping, FP8 pairing)
+KNOWN_ISSUES.md  genuine limitations (GDS host build, cufile.json, privileged pod, striping, setup.sh exit code)
 ```
 
 ## Prerequisites
