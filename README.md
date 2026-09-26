@@ -1,12 +1,18 @@
 # Accelerate vLLM model loading on Amazon EKS using InstantTensor loader with GPUDirect Storage (GDS) on Amazon FSx for Lustre
 
-This repository contains the AWS infrastructure, EKS manifests and setup scripts to
-benchmark vLLM cold-start model-loading time on a single `p5en.48xlarge`, comparing
-three read paths for the 1.6-trillion parameter [DeepSeek-V4-Pro-0813](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813) full weights (892.7 GB).
-
-Using the new [InstantTensor](https://docs.vllm.ai/en/latest/models/extensions/instanttensor/)
+This repository aims to help customers running self-managed LLMs on Amazon EKS reduce vLLM
+cold-start model-loading time. Using the [InstantTensor](https://docs.vllm.ai/en/latest/models/extensions/instanttensor/)
 loader with NVIDIA GPUDirect Storage (GDS) on Amazon FSx for Lustre, we were able to cut the vLLM
 weight loading time from about 28 minutes to 35 seconds — a **~48x speedup** in our testing.
+
+It contains the AWS infrastructure, EKS manifests and setup scripts to benchmark vLLM cold-start
+model-loading time on a single `p5en.48xlarge`, comparing three read paths for the 1.6-trillion
+parameter [DeepSeek-V4-Pro-0813](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813) full
+weights (892.7 GB):
+
+- FSx for Lustre with the default loader
+- S3 + Run:ai Model Streamer
+- FSx for Lustre with GDS
 
 ## Disclaimer
 
@@ -78,9 +84,8 @@ Per-run weight-load values (tested in `us-east-2`):
 - S3 + Run:ai model streamer: 246 / 351 / 352 s
 - FSx for Lustre with GDS: 35.1 / 35.5 / 35.8 s
 
-[^1]: Read from rank 0's progress bar, the only rank that prints one. The S3 arm's ranks finish up to
-    57% apart, so this figure moves far more between runs than the total does: a later run read 210 s
-    here against a 371 s total.
+[^1]: Read from rank 0's progress bar; the S3 arm prints no other rank's. Its ranks' loading times vary by
+    up to 57%, so a rank-0-only figure moves far more between runs than the total does.
 
 The GDS arm spends 21 of its 35.5 seconds moving bytes from storage into GPU memory, at
 42.5 GB/s. That is faster than the 37.5 GB/s the filesystem provisions, which is only possible
