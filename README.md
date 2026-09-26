@@ -70,13 +70,17 @@ cache, which understates the speedup rather than inflating it.
 | source / loader | weight load | total model load | vs default |
 |---|---|---|---|
 | FSx Lustre, default vLLM (`auto`) | 1703.0 s | 1712.7 s | 1.0× |
-| S3 + Run:AI streamer (`concurrency: 32`) | 316.3 s | 368.7 s | 5.4× |
+| S3 + Run:AI streamer (`concurrency: 32`) | 316.3 s[^1] | 368.7 s | 5.4× |
 | FSx Lustre + GDS (`instanttensor` CUFILE) | **35.5 s** | 45.1 s | **48.0×** |
 
 Per-run weight-load values (tested in `us-east-2`):
 - FSx for Lustre with default loader: 1681.4 / 1662.6 / 1765.1 s
 - S3 + Run:ai model streamer: 246 / 351 / 352 s
 - FSx for Lustre with GDS: 35.1 / 35.5 / 35.8 s
+
+[^1]: Read from rank 0's progress bar, the only rank that prints one. The S3 arm's ranks finish up to
+    57% apart, so this figure moves far more between runs than the total does: a later run read 210 s
+    here against a 371 s total.
 
 The GDS arm spends 21 of its 35.5 seconds moving bytes from storage into GPU memory, at
 42.5 GB/s. That is faster than the 37.5 GB/s the filesystem provisions, which is only possible
@@ -172,7 +176,7 @@ aws s3api put-public-access-block --bucket $S3_BUCKET \
   --public-access-block-configuration \
   BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 ```
-Check: `aws s3api get-public-access-block --bucket $S3_BUCKET` — all four `true`.
+Expect: `aws s3api get-public-access-block --bucket $S3_BUCKET` to show all four `true`.
 
 Create the bucket before Step 5: the staging node's S3 permissions are rendered from
 `$S3_BUCKET`, so changing the name after the cluster exists leaves the policy on the old
@@ -187,9 +191,9 @@ aws ecr get-login-password --region $AWS_REGION \
 docker build -t $IMAGE image/
 docker push $IMAGE
 ```
-Check: `aws ecr describe-images --repository-name vllm-gds --region $AWS_REGION \
+Expect: `aws ecr describe-images --repository-name vllm-gds --region $AWS_REGION \
   --image-ids imageTag=${IMAGE##*:} --query 'imageDetails[0].imagePushedAt' --output text`
-— prints a timestamp.
+to print a timestamp.
 
 ### Step 3: FSx security group
 ```bash
@@ -199,6 +203,8 @@ for D in ingress egress; do
   aws ec2 authorize-security-group-$D --group-id $SG --protocol -1 --source-group $SG
 done
 ```
+Expect: `aws ec2 describe-security-groups --group-ids $SG --query 'SecurityGroups[0].[IpPermissions[].UserIdGroupPairs[].GroupId, IpPermissionsEgress[].UserIdGroupPairs[].GroupId]' --output text`
+to print `$SG` on both lines.
 
 ### Step 4: FSx for Lustre, 8 OSTs
 ```bash
@@ -218,6 +224,7 @@ Expect: 38400 / 4800 = **8 OSTs**, 37.5 GB/s provisioned.
 ### Step 5: EKS cluster, staging node, cross-SG rules
 ```bash
 envsubst < cluster/cluster.yaml | eksctl create cluster -f - --kubeconfig $HOME/.kube/$CLUSTER.config
+export KUBECONFIG=$HOME/.kube/$CLUSTER.config
 CLSG=$(aws eks describe-cluster --name $CLUSTER \
   --query cluster.resourcesVpcConfig.clusterSecurityGroupId --output text)
 for P in "$SG $CLSG" "$CLSG $SG"; do set -- $P
@@ -225,6 +232,8 @@ for P in "$SG $CLSG" "$CLSG $SG"; do set -- $P
   aws ec2 authorize-security-group-egress  --group-id $1 --protocol -1 --source-group $2
 done
 ```
+Expect: `aws ec2 describe-security-groups --group-ids $SG $CLSG --query 'SecurityGroups[].[GroupId, IpPermissions[].UserIdGroupPairs[].GroupId, IpPermissionsEgress[].UserIdGroupPairs[].GroupId]' --output text`
+to list each group under the other's ingress and egress, and `kubectl get nodes` to show the staging node `Ready`.
 
 ### Step 6: Mount FSx, set striping, stage weights
 
@@ -258,7 +267,7 @@ run_on_node $STAGING_NODE scripts/01-mount-and-stripe.sh \
 run_on_node $STAGING_NODE scripts/02-stage-weights.sh \
   FSX_DNS=$FSX_DNS FSX_MOUNT=$FSX_MOUNT MODEL_DIR=$MODEL_DIR MODEL_REPO=$MODEL_REPO
 ```
-Check: `01` prints `8` active OSTs and `stripe_count: -1`; `02` ends with
+Expect: `01` to print `8` active OSTs and `stripe_count: -1`, and `02` to end with
 `all 71 files verified byte-exact`. `02` downloads 892.7 GB and takes roughly 15 minutes.
 
 ### Step 7: Upload a copy to S3 (for the S3 arm)
@@ -269,11 +278,14 @@ run_on_node $STAGING_NODE /dev/stdin \
 aws s3 cp $MODEL_DIR/ s3://$S3_BUCKET/$MODEL_NAME/ --recursive --only-show-errors
 EOS
 ```
+Expect: `aws s3 ls s3://$S3_BUCKET/$MODEL_NAME/ --summarize | tail -2` to show 71 objects, 892,762,344,570 bytes. Takes
+about 20 minutes.
 
 ### Step 8: GPU node on the capacity block
 ```bash
 envsubst < cluster/gpu-nodegroup-p5en.yaml | eksctl create nodegroup -f -
 ```
+Expect: `kubectl get nodes -l role=gpu` to show one node `Ready` within about 5 minutes.
 
 ### Step 9: GDS host setup (run once, after the node is k8s-Ready)
 Run on the GPU node via SSM. GDS setup is **not** in node bootstrap: the EFA-over-LNet step
@@ -286,8 +298,14 @@ GPU_NODE=$(aws ec2 describe-instances --region $AWS_REGION \
 
 run_on_node $GPU_NODE scripts/03-host-gds.sh
 ```
-Check: ends with `nvidia-fs devices: 16    EFA NIDs: 16`. Takes about 10 minutes, most of it
-compiling nvidia-fs.
+Expect: about 3 minutes. The build log is longer than SSM returns, so the script's final line is
+usually cut off in `run_on_node`'s output; verify on the node instead:
+```bash
+run_on_node $GPU_NODE /dev/stdin <<'EOS'
+echo "nvidia-fs devices: $(ls /dev/nvidia-fs* | wc -l)    EFA NIDs: $(lnetctl net show | grep -c '@efa')"
+EOS
+```
+Expect: `nvidia-fs devices: 16    EFA NIDs: 16`.
 
 Then confirm Lustre is really using EFA - the interfaces come up and sit idle if the security
 groups do not authorise it, and Lustre falls back to TCP at a fraction of the bandwidth with no
@@ -310,12 +328,13 @@ does not change the DMA path (`readMiB` still moves by the full checkpoint).
 kubectl apply -k "github.com/kubernetes-sigs/aws-fsx-csi-driver/deploy/kubernetes/overlays/stable/?ref=release-1.4"
 envsubst '${FSX_ID} ${FSX_DNS} ${FSX_MOUNT}' < manifests/fsx-lustre-pv-pvc.yaml | kubectl apply -f -
 ```
+Expect: `kubectl get pvc fsx-dsv4p-pvc` to show `Bound`.
 
 ### Step 11: Run the three-arm benchmark
 ```bash
 bash scripts/04-loader-ab.sh              # renders manifests via envsubst; FSx default | S3 Run:AI | FSx GDS
 ```
-Check: about 50 minutes for all three arms. Each writes `dsv4p-{default,s3,gds}.log`. For every
+Expect: about an hour for all three arms. Each writes `dsv4p-{default,s3,gds}.log`. For every
 arm the script prints the weight-load figure first, then eight `Model loading took` lines, one per
 tensor-parallel rank - take the slowest of those. On the S3 arm the weight-load figure comes from
 the loader's progress bar, since the Run:AI streamer does not log its own. `NOT READY` means that

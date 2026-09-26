@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: MIT-0
 # Run the three loader arms one at a time and print each load time.
 # Single node: each arm is deleted before the next is applied.
 set -euo pipefail

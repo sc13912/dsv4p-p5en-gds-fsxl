@@ -1,5 +1,3 @@
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: MIT-0
 # DeepSeek-V4-Pro-0813 weight loading from FSx for Lustre over GPUDirect Storage.
 # Additive layer on the upstream vLLM image: nothing is removed or downgraded.
 # pip delta vs base = instanttensor only.

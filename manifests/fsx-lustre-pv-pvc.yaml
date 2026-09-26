@@ -1,5 +1,3 @@
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: MIT-0
 # Static PV + PVC binding the pre-created FSx for Lustre (Step 4) via the FSx CSI driver.
 # Render + apply:  envsubst '${FSX_ID} ${FSX_DNS} ${FSX_MOUNT}' < manifests/fsx-lustre-pv-pvc.yaml | kubectl apply -f -
 # GDS works through this CSI-mounted path — verified: the nvidia-fs readMiB counter still moves by

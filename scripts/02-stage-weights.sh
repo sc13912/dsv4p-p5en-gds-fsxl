@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: MIT-0
 # Stage the checkpoint onto the striped FSx dir. Use curl, not huggingface_hub,
 # which resets stripe_count to 1; curl inherits the dir's stripe default.
 set -euo pipefail

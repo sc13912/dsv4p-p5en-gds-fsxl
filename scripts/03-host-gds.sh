@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: MIT-0
-# GDS host setup — run ONCE per GPU node AFTER it is k8s-Ready, NOT in node bootstrap.
-# Why not bootstrap: the EFA-over-LNet step pins each EFA interface to an LNet CPU partition, which
-# requires LNet to load with its 16-partition CPU table. If anything loads LNet earlier (e.g. a
-# `modprobe lustre` in preBootstrap), it comes up with the default partitions and the CPT pinning is
-# rejected — only ~3 of 16 interfaces attach. Running this after the node is up lets the AWS script
-# load LNet cleanly with the right table, so all 16 attach.
+# GDS host setup — run once per GPU node after it has joined the cluster.
 set -euo pipefail
 
-# Lustre client (lfs + mount.lustre) — install only; do NOT `modprobe lustre` here (leave LNet unloaded
-# so the EFA script below can load it with the correct CPU-partition table).
-dnf install -y lustre-client
-dnf install -y make gcc   # kernel headers already ship at /usr/src/kernels/$(uname -r)
+dnf install -y lustre-client make gcc   # kernel headers already ship at /usr/src/kernels/$(uname -r)
 
 # nvidia-fs (GDS kernel module) from source, pinned v2.29.4, NVFS_MAX_PEER_DEVS=128
 # (default 64 is too small for p5en's 16 EFA + ENA + NVMe devices).
@@ -30,12 +20,14 @@ NVIDIA_SRC_DIR="$NVIDIA_SRC_DIR" \
 rmmod nvidia_fs 2>/dev/null || true
 insmod ./nvidia-fs.ko
 
-# Put Lustre's traffic onto the EFA interfaces for GDS, using AWS's own script - it loads LNet with the
-# 16-partition CPU table the EFA pinning needs. Ignore its exit code: on a first boot the closing
-# `systemctl enable --now` returns non-zero with "Job for ... canceled" even though the service
-# started fine, so we check the unit state below instead. It leaves nvidia_fs untouched.
+# Put Lustre's traffic onto the EFA interfaces for GDS, using AWS's own script. It writes libcfs
+# CPU-partition options that only take effect when the module loads, so unload any Lustre/LNet
+# stack first. Ignore its exit code: on a first boot the closing `systemctl enable --now` returns
+# non-zero with "Job for ... canceled" even though the service started fine, so we check the unit
+# state below instead. It leaves nvidia_fs untouched.
 cd /tmp && curl -sO https://docs.aws.amazon.com/fsx/latest/LustreGuide/samples/configure-efa-fsx-lustre-client.zip
 unzip -oq configure-efa-fsx-lustre-client.zip
+lustre_rmmod 2>/dev/null || true
 ( cd configure-efa-fsx-lustre-client && bash ./setup.sh --optimized-for-gds ) || true
 systemctl is-active --quiet configure-efa-fsx-lustre-client.service \
   || { echo "FATAL: configure-efa-fsx-lustre-client.service is not active"; exit 1; }

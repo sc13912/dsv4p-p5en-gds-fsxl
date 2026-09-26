@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: MIT-0
 # Mount FSx and stripe across every OST. Run on the staging node BEFORE staging.
 set -euo pipefail
 : "${FSX_DNS:?}" "${FSX_MOUNT:?}" "${MODEL_DIR:?}"
