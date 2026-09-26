@@ -19,7 +19,7 @@ run(){ # manifest  app-label  description
     sleep 5
   done
   kubectl logs -l "app=$2" --tail=-1 > "$2.log"   # keep the entire vllm start log
-  # weight load time: the FSx arms log it; the Run:AI streamer only has its progress bar
+  # weight load time: the FSx arms log it; the Run:ai streamer only has its progress bar
   grep -a "Loading weights took" "$2.log" \
     || grep -a "Loading safetensors" "$2.log" | grep -a "100%" | tail -1 \
     || echo "no weight-load figure in $2.log"
@@ -28,5 +28,5 @@ run(){ # manifest  app-label  description
 }
 
 run 00-serve-dsv4p-default.yaml dsv4p-default "FSx Lustre, default vLLM loader"
-run 02-serve-dsv4p-s3.yaml      dsv4p-s3      "S3 + Run:AI streamer (concurrency 32)"
+run 02-serve-dsv4p-s3.yaml      dsv4p-s3      "S3 + Run:ai streamer (concurrency 32)"
 run 01-serve-dsv4p-gds.yaml     dsv4p-gds     "FSx Lustre + GDS (instanttensor CUFILE)"

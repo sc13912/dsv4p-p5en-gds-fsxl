@@ -30,7 +30,7 @@ each file, deserializing it, then copying the tensors to each GPU.
 This repository measures how much faster that step gets when the weights go straight from storage
 into GPU memory over NVIDIA GPUDirect Storage (GDS), using the InstantTensor loader on Amazon FSx
 for Lustre. For comparison we also run the same weights through the
-[NVIDIA Run:AI Model Streamer](https://github.com/dsx-ai-factory/model-streamer) from S3, and
+[NVIDIA Run:ai Model Streamer](https://github.com/dsx-ai-factory/model-streamer) from S3, and
 through vLLM's default loader as the baseline.
 
 We look at the weight-loading phase only, using the `Loading weights took` line that vLLM prints
@@ -55,7 +55,7 @@ Of the two GDS-capable loaders, only one keeps the fast path when using tensor p
   `public.ecr.aws/deep-learning-containers/vllm:0.28.0-gpu-py312-cu130-ubuntu24.04-ec2`
   (the same upstream vLLM 0.28.0 release, republished by AWS with EFA and aws-ofi-nccl).
 - Amazon FSx for Lustre, **PERSISTENT_2**, **8 OSTs** (37.5 GB/s provisioned), EFA-enabled.
-- An S3 bucket in the same Region holds another copy of the model weights for the Run:AI arm.
+- An S3 bucket in the same Region holds another copy of the model weights for the Run:ai arm.
 
 ## Measured Performance
 
@@ -66,7 +66,7 @@ spends loading weights, which it reports in a `Loading weights took … seconds`
 two is a post-load processing step, which we can measure on the two FSx arms and which comes to
 about 9.6 seconds on both.
 
-The Run:AI streamer never reports its own load time, so for that arm we read the elapsed time off
+The Run:ai streamer never reports its own load time, so for that arm we read the elapsed time off
 the loader's progress bar instead.
 
 Every arm drops the host page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`) before loading, so
@@ -76,7 +76,7 @@ cache, which understates the speedup rather than inflating it.
 | source / loader | weight load | total model load | vs default |
 |---|---|---|---|
 | FSx Lustre, default vLLM (`auto`) | 1703.0 s | 1712.7 s | 1.0× |
-| S3 + Run:AI streamer (`concurrency: 32`) | 316.3 s[^1] | 368.7 s | 5.4× |
+| S3 + Run:ai streamer (`concurrency: 32`) | 316.3 s[^1] | 368.7 s | 5.4× |
 | FSx Lustre + GDS (`instanttensor` CUFILE) | **35.5 s** | 45.1 s | **48.0×** |
 
 Per-run weight-load values (tested in `us-east-2`):
@@ -337,12 +337,12 @@ Expect: `kubectl get pvc fsx-dsv4p-pvc` to show `Bound`.
 
 ### Step 11: Run the three-arm benchmark
 ```bash
-bash scripts/04-loader-ab.sh              # renders manifests via envsubst; FSx default | S3 Run:AI | FSx GDS
+bash scripts/04-loader-ab.sh              # renders manifests via envsubst; FSx default | S3 Run:ai | FSx GDS
 ```
 Expect: about an hour for all three arms. Each writes `dsv4p-{default,s3,gds}.log`. For every
 arm the script prints the weight-load figure first, then eight `Model loading took` lines, one per
 tensor-parallel rank - take the slowest of those. On the S3 arm the weight-load figure comes from
-the loader's progress bar, since the Run:AI streamer does not log its own. `NOT READY` means that
+the loader's progress bar, since the Run:ai streamer does not log its own. `NOT READY` means that
 arm never served and its log holds the reason.
 
 Then confirm on the node that GDS carried the checkpoint, rather than the POSIX path silently
