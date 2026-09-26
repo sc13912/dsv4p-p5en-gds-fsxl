@@ -11,7 +11,7 @@ parameter [DeepSeek-V4-Pro-0813](https://huggingface.co/deepseek-ai/DeepSeek-V4-
 weights (892.7 GB):
 
 - FSx for Lustre with the default loader
-- S3 + Run:ai Model Streamer
+- S3 + [Run:ai Model Streamer](https://github.com/dsx-ai-factory/model-streamer)
 - FSx for Lustre with GDS
 
 ## Disclaimer
