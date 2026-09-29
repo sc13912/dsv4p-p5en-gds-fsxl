@@ -367,9 +367,6 @@ A bigger filesystem buys less than you would expect. On a MoE model such as Deep
 doubling from 8 to 16 OSTs improved weight loading by only 10%, because 40% of the weight load goes
 on per-tensor work that is not bandwidth bound.
 
-To reproduce this, follow the Deployment steps above. The traps we hit on the way are in
-[`KNOWN_ISSUES.md`](KNOWN_ISSUES.md).
-
 ## Known Issues
 
 See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md).
