@@ -69,9 +69,7 @@ parallel, and it comes to about 9.6 seconds on both FSx arms.
 The Run:ai streamer never reports its own load time, so for that arm we read the elapsed time off
 the loader's progress bar instead.
 
-Every arm drops the host page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`) before loading, so
-each figure is a cold read. Without it the default loader can come in around 4x faster off a warm
-cache, which understates the speedup rather than inflating it.
+Each figure below is the mean of three runs (n=3):
 
 | source / loader | weight load | total model load | vs default |
 |---|---|---|---|
